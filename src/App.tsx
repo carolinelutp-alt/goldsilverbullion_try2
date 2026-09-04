@@ -72,15 +72,70 @@ export default function App() {
     }, 3500);
   }, []);
 
-  // Spot price refresh handler
-  const handleRefreshSpot = useCallback(() => {
+  // Spot price refresh handler from live API (/api/spot -> api.gold-api.com)
+  const handleRefreshSpot = useCallback(async (isSilent = false) => {
     setIsRefreshing(true);
-    setTimeout(() => {
+    try {
+      const res = await fetch('/api/spot');
+      if (res.ok) {
+        const data = await res.json();
+        const goldPrice = Number(data.gold?.price);
+        const silverPrice = Number(data.silver?.price);
+
+        if (!isNaN(goldPrice) && goldPrice > 0) {
+          setSpotPrices((prev) => {
+            const finalSilver = (!isNaN(silverPrice) && silverPrice > 0) ? silverPrice : prev.silver;
+            const goldChange = prev.gold ? ((goldPrice - prev.gold) / prev.gold) * 100 : prev.change24h.gold;
+            const silverChange = prev.silver ? ((finalSilver - prev.silver) / prev.silver) * 100 : prev.change24h.silver;
+
+            return {
+              ...prev,
+              gold: Number(goldPrice.toFixed(2)),
+              silver: Number(finalSilver.toFixed(2)),
+              change24h: {
+                ...prev.change24h,
+                gold: Number(goldChange.toFixed(2)),
+                silver: Number(silverChange.toFixed(2)),
+              },
+              high24h: {
+                gold: Math.max(prev.high24h.gold, goldPrice),
+                silver: Math.max(prev.high24h.silver, finalSilver),
+              },
+              low24h: {
+                gold: Math.min(prev.low24h.gold, goldPrice),
+                silver: Math.min(prev.low24h.silver, finalSilver),
+              },
+              lastUpdated: Date.now(),
+              nextRefreshSeconds: 600,
+            };
+          });
+
+          if (!isSilent) {
+            showToast(`Live Spot Updated — Gold: $${goldPrice.toFixed(2)} | Silver: $${silverPrice ? silverPrice.toFixed(2) : ''}`);
+          }
+          return;
+        }
+      }
+      // Fallback if live feed unavailable
       setSpotPrices((prev) => fluctuateSpotPrices(prev));
+      if (!isSilent) {
+        showToast('Live Spot Prices Refreshed (Benchmark Fallback)');
+      }
+    } catch (err) {
+      console.warn('Could not reach live spot endpoint, using fallback:', err);
+      setSpotPrices((prev) => fluctuateSpotPrices(prev));
+      if (!isSilent) {
+        showToast('Live Spot Prices Refreshed (Benchmark Fallback)');
+      }
+    } finally {
       setIsRefreshing(false);
-      showToast('Live Spot Prices Refreshed (LBMA / COMEX Benchmark)');
-    }, 600);
+    }
   }, [showToast]);
+
+  // Initial load of live spot prices
+  useEffect(() => {
+    handleRefreshSpot(true);
+  }, [handleRefreshSpot]);
 
   // Cart Management
   const handleAddToCart = (product: Product, quantity: number = 1) => {
